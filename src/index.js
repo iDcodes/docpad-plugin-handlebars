@@ -1,65 +1,82 @@
+// Modernized ES6+ docpad-plugin-handlebars
 module.exports = function (BasePlugin) {
-  // Use old-style constructor pattern (DocPad expects this)
-  var HandlebarsPlugin = BasePlugin.extend({
+  class HandlebarsPlugin extends BasePlugin {
+      constructor(...args) {
+          super(...args);
 
-      name: 'handlebars',
-
-      // Called AFTER constructor, BEFORE rendering
-      setConfig: function (config) {
-          console.log("DocPad Handlebars Plugin: setConfig()");
-          console.log("Incoming plugin config:", config);
-
-          this.handlebars = this.handlebars || require('handlebars');
-
-          // Use incoming config (NOT this.config yet)
-          this.precompileOpts = config.precompileOpts || {};
-          console.log("Precompile opts:", this.precompileOpts);
-
-          if (config.helpers) {
-              for (var name in config.helpers) {
-                  console.log("Registering Handlebars helper:", name);
-                  this.handlebars.registerHelper(name, config.helpers[name]);
-              }
-          }
-
-          if (config.partials) {
-              for (var name in config.partials) {
-                  this.handlebars.registerPartial(name, config.partials[name]);
-              }
-          }
-
-          // Now DocPad stores the config
-          HandlebarsPlugin.__super__.setConfig.call(this, config);
-      },
-
-      render: function (opts) {
-          var handlebars = this.handlebars;
-
-          if (['hb', 'hbs', 'handlebars'].indexOf(opts.inExtension) !== -1) {
-              if (['js', 'inlinejs'].indexOf(opts.outExtension) !== -1) {
-                  opts.content = this.precompile(opts);
-              } else {
-                  opts.content = handlebars.compile(opts.content)(opts.templateData);
-              }
-          }
-
-          return opts;
-      },
-
-      precompile: function (opts) {
-          var handlebars = this.handlebars;
-          var name = opts.file.attributes.slug;
-
-          var pre = "(function(){\n";
-          var post = "})();";
-
-          pre += "var template = Handlebars.template, templates = Handlebars.templates = Handlebars.templates || {};\n";
-          pre += "templates['" + name + "'] = template(";
-          post = ");\n" + post;
-
-          return pre + handlebars.precompile(opts.content) + post;
+          this.handlebars = require('handlebars');
+          this.precompileOpts = {};
       }
-  });
+
+      // REQUIRED BY DOCPAD
+      get name() {
+          return 'handlebars';
+      }
+
+      // Called after DocPad loads plugin config
+      setConfig(config) {
+          console.log("HandlebarsPlugin:setConfig()", config);
+
+          const hb = this.handlebars;
+
+          // Precompile options
+          this.precompileOpts = config.precompileOpts || {};
+
+          // Register helpers
+          if (config.helpers) {
+              Object.keys(config.helpers).forEach(name => {
+                  console.log("Register helper:", name);
+                  hb.registerHelper(name, config.helpers[name]);
+              });
+          }
+
+          // Register partials
+          if (config.partials) {
+              Object.keys(config.partials).forEach(name => {
+                  console.log("Register partial:", name);
+                  hb.registerPartial(name, config.partials[name]);
+              });
+          }
+
+          // MUST call parent last
+          return super.setConfig(config);
+      }
+
+      // DOCPAD HOOK: render file
+      render(opts, next) {
+          const hb = this.handlebars;
+          const { inExtension, outExtension, content, templateData } = opts;
+
+          // Only process Handlebars templates
+          if (!['hb', 'hbs', 'handlebars'].includes(inExtension)) {
+              return next();
+          }
+
+          try {
+              if (['js', 'inlinejs'].includes(outExtension)) {
+                  opts.content = this.precompileTemplate(opts);
+              } else {
+                  opts.content = hb.compile(content)(templateData);
+              }
+              return next();
+          } catch (err) {
+              return next(err);
+          }
+      }
+
+      // Precompile for client-side use
+      precompileTemplate(opts) {
+          const hb = this.handlebars;
+          const slug = opts.file.attributes.slug;
+
+          let pre = "(function(){\n";
+          pre += "var template = Handlebars.template, templates = Handlebars.templates = Handlebars.templates || {};\n";
+          pre += `templates['${slug}'] = template(`;
+          let post = ");})();";
+
+          return pre + hb.precompile(opts.content) + post;
+      }
+  }
 
   return HandlebarsPlugin;
 };
