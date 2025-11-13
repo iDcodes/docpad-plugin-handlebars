@@ -1,82 +1,122 @@
-// Modernized ES6+ docpad-plugin-handlebars
-module.exports = function (BasePlugin) {
-  class HandlebarsPlugin extends BasePlugin {
-      constructor(...args) {
-          super(...args);
+// @ts-nocheck
+'use strict'
 
-          this.handlebars = require('handlebars');
-          this.precompileOpts = {};
-      }
+// External
+const BasePlugin = require('docpad-baseplugin')
+const Handlebars = require('handlebars')
 
-      // REQUIRED BY DOCPAD
-      get name() {
-          return 'handlebars';
-      }
+/**
+ * Handlebars Plugin for DocPad (modern ES6 version)
+ * Compatible with DocPad 8
+ */
+class HandlebarsPlugin extends BasePlugin {
+	get name() {
+		return 'handlebars'
+	}
 
-      // Called after DocPad loads plugin config
-      setConfig(config) {
-          console.log("HandlebarsPlugin:setConfig()", config);
+	get initialConfig() {
+		return {
+			precompileOpts: {},
+			helpers: {},
+			partials: {}
+		}
+	}
 
-          const hb = this.handlebars;
+	/**
+	 * Called when DocPad is ready — initialize Handlebars, helpers, and partials.
+	 */
+	docpadReady(opts, next) {
+		const { docpad } = this
+		const config = this.getConfig()
 
-          // Precompile options
-          this.precompileOpts = config.precompileOpts || {};
+		docpad.log('info', '[HandlebarsPlugin] Initializing Handlebars...')
 
-          // Register helpers
-          if (config.helpers) {
-              Object.keys(config.helpers).forEach(name => {
-                  console.log("Register helper:", name);
-                  hb.registerHelper(name, config.helpers[name]);
-              });
-          }
+		this.handlebars = Handlebars
+		this.precompileOpts = config.precompileOpts || {}
 
-          // Register partials
-          if (config.partials) {
-              Object.keys(config.partials).forEach(name => {
-                  console.log("Register partial:", name);
-                  hb.registerPartial(name, config.partials[name]);
-              });
-          }
+		// Register helpers
+		if (config.helpers && typeof config.helpers === 'object') {
+			Object.entries(config.helpers).forEach(([name, helper]) => {
+				try {
+					this.handlebars.registerHelper(name, helper)
+					docpad.log('debug', `[HandlebarsPlugin] Registered helper: ${name}`)
+				} catch (err) {
+					docpad.log('error', `[HandlebarsPlugin] Failed to register helper: ${name}`, err)
+				}
+			})
+		}
 
-          // MUST call parent last
-          return super.setConfig(config);
-      }
+		// Register partials
+		if (config.partials && typeof config.partials === 'object') {
+			Object.entries(config.partials).forEach(([name, partial]) => {
+				try {
+					this.handlebars.registerPartial(name, partial)
+					docpad.log('debug', `[HandlebarsPlugin] Registered partial: ${name}`)
+				} catch (err) {
+					docpad.log('error', `[HandlebarsPlugin] Failed to register partial: ${name}`, err)
+				}
+			})
+		}
 
-      // DOCPAD HOOK: render file
-      render(opts, next) {
-          const hb = this.handlebars;
-          const { inExtension, outExtension, content, templateData } = opts;
+		docpad.log('info', '[HandlebarsPlugin] Handlebars ready.')
+		next()
+	}
 
-          // Only process Handlebars templates
-          if (!['hb', 'hbs', 'handlebars'].includes(inExtension)) {
-              return next();
-          }
+	/**
+	 * Renders Handlebars files (.hbs, .handlebars)
+	 */
+	render(opts, next) {
+		const { inExtension, outExtension, templateData, content, file } = opts
+		const { handlebars } = this
 
-          try {
-              if (['js', 'inlinejs'].includes(outExtension)) {
-                  opts.content = this.precompileTemplate(opts);
-              } else {
-                  opts.content = hb.compile(content)(templateData);
-              }
-              return next();
-          } catch (err) {
-              return next(err);
-          }
-      }
+		try {
+			if (['hb', 'hbs', 'handlebars'].includes(inExtension)) {
+				if (['js', 'inlinejs'].includes(outExtension)) {
+					opts.content = this.handlePrecompileOpts(opts)
+				} else {
+					const compiled = handlebars.compile(content)
+					opts.content = compiled(templateData)
+				}
+			}
+			next()
+		} catch (err) {
+			this.docpad.log('error', `[HandlebarsPlugin] Render error in ${file?.attributes?.relativePath || 'unknown file'}`, err)
+			next(err)
+		}
+	}
 
-      // Precompile for client-side use
-      precompileTemplate(opts) {
-          const hb = this.handlebars;
-          const slug = opts.file.attributes.slug;
+	/**
+	 * Handles Handlebars precompilation (for JS templates)
+	 */
+	handlePrecompileOpts(opts) {
+		const argv = { ...this.precompileOpts }
+		argv.wrapper ??= 'default'
+		argv.amdPath ??= ''
 
-          let pre = "(function(){\n";
-          pre += "var template = Handlebars.template, templates = Handlebars.templates = Handlebars.templates || {};\n";
-          pre += `templates['${slug}'] = template(`;
-          let post = ");})();";
+		let pre = ''
+		let post = ''
 
-          return pre + hb.precompile(opts.content) + post;
-      }
-  }
+		const templateName = opts.file.attributes.slug || opts.file.attributes.basename
 
-  return HandlebarsPlugin;
-};
+		if (argv.wrapper === 'amd') {
+			pre += `define(['${argv.amdPath}handlebars'], function(Handlebars) {\n`
+		}
+
+		if (argv.wrapper === 'default') {
+			pre += '(function() {\n'
+		}
+
+		if (['default', 'amd'].includes(argv.wrapper)) {
+			pre += '  var template = Handlebars.template, templates = Handlebars.templates = Handlebars.templates || {};\n'
+			pre += `  templates['${templateName}'] = template(`
+			post += ');\n'
+		}
+
+		if (argv.wrapper === 'amd') post += '});'
+		if (argv.wrapper === 'default') post += '})();'
+
+		return pre + this.handlebars.precompile(opts.content) + post
+	}
+}
+
+module.exports = HandlebarsPlugin
